@@ -1,0 +1,33 @@
+# Example: run envreplace as an init container that fills template
+# files with environment-variable values before the main service starts.
+#
+#   docker compose up init
+#
+# The init service reads the templates from ./examples/input (read-only)
+# and writes the substituted result to ./config. It exits 0 on success;
+# on any failure it writes the error to the log and exits non-zero, so
+# the main service's `depends_on` condition will not be met.
+services:
+  init:
+    image: ghcr.io/your-org/envreplace:latest
+    env_file: .env
+    environment:
+      ENVREPLACE_INPUT_DIR: /input
+      ENVREPLACE_OUTPUT_DIR: /output
+    volumes:
+      - ./examples/input:/input:ro
+      - ./config:/output
+    # The nonroot user in the distroless runtime image (uid/gid 65532)
+    # must be able to write to the mounted output directory. On a host
+    # where ./config is owned by root, run once:
+    #   sudo chown -R 65532:65532 config
+    restart: "no"
+
+  app:
+    image: alpine:3.20
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    volumes:
+      - ./config:/config:ro
+    command: sh -c 'sleep 3600'

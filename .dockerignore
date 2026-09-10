@@ -1,0 +1,12 @@
+# Keep the Docker build context small and the image free of files the
+# builder and runtime stages do not need.
+.git
+.github
+examples
+docs
+*.md
+docker-compose.yml
+.env
+.env.*
+.envreplace-tmp-*
+envreplace
