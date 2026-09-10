@@ -1,5 +1,6 @@
 # Go build output
 envreplace
+docker-env-replace
 *.exe
 *.o
 
