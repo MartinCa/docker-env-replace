@@ -46,6 +46,6 @@ jobs:
         with:
           context: .
           push: false
-          tags: envreplace:ci
+          tags: docker-env-replace:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max

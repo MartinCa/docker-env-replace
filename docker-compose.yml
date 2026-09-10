@@ -1,4 +1,4 @@
-# Example: run envreplace as an init container that fills template
+# Example: run docker-env-replace as an init container that fills template
 # files with environment-variable values before the main service starts.
 #
 #   docker compose up init

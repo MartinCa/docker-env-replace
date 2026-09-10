@@ -1,4 +1,4 @@
-# envreplace
+# docker-env-replace
 
 A minimal Docker image utility that performs environment-variable token
 replacement in files. It is designed to be used as a Docker Compose
@@ -147,7 +147,7 @@ See [`examples/README.md`](examples/README.md):
 Prerequisites: the [Go](https://go.dev) toolchain (1.23 or newer).
 
 ```sh
-go build ./...     # build the envreplace binary
+go build ./...     # build the docker-env-replace binary
 go test ./...      # run the test suite
 gofmt -l .         # check formatting (run `go fmt ./...` to fix)
 ```
@@ -156,9 +156,10 @@ The Docker image is built multi-stage:
 
 ```dockerfile
 FROM golang:1.23-alpine AS builder
-# go build -ldflags='-linkmode=external -extldflags=-static'  -> static binary
+# go build -o /out/docker-env-replace \
+#     -ldflags='-linkmode=external -extldflags=-static'  -> static binary
 FROM gcr.io/distroless/static-debian12:nonroot
-ENTRYPOINT ["/usr/local/bin/envreplace"]
+ENTRYPOINT ["/usr/local/bin/docker-env-replace"]
 ```
 
 The builder links a fully static, self-contained executable (the Go
