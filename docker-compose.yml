@@ -9,7 +9,7 @@
 # the main service's `depends_on` condition will not be met.
 services:
   init:
-    image: ghcr.io/MartinCa/docker-env-replace:latest@sha256:fbcbe1f56f47b28dcc88382d30f0549f2ccd6bc295815d564b68579b6fc881da
+    image: ghcr.io/martinca/docker-env-replace:0.0.3@sha256:1719fc59d4bdfb58b993b200b40b0025d6e270eb1ffb2cae16ad5e322e31d528
     env_file: .env
     environment:
       ENVREPLACE_INPUT_DIR: /input
