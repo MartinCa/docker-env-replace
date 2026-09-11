@@ -1,7 +1,7 @@
-// Copyright 2026 The envreplace authors. All rights reserved.
+// Copyright 2026 The docker-env-replace authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license.
 
-// Package main holds the tests for the envreplace utility. Every test
+// Package main holds the tests for the docker-env-replace utility. Every test
 // that reads or writes the process environment takes the envMu lock so
 // that the environment cannot change between a test's t.Setenv call and
 // its use of loadConfig/run.
@@ -9,8 +9,10 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,7 +22,7 @@ import (
 )
 
 // envMu serializes all tests that touch environment variables or the
-// shared ENVREPLACE_* configuration.
+// shared DOCKER_ENV_REPLACE_* configuration.
 var envMu sync.Mutex
 
 // testName is a unique prefix for variables used by a single test.
@@ -29,11 +31,11 @@ var testName int
 // freshVar returns a unique environment variable name.
 func freshVar(name string) string {
 	testName++
-	return fmt.Sprintf("ENVREPLACE_TEST_%d_%s", testName, name)
+	return fmt.Sprintf("DOCKER_ENV_REPLACE_TEST_%d_%s", testName, name)
 }
 
 // freshInputDir prepares a new input directory and points the
-// ENVREPLACE_* configuration at it plus a fresh output directory.
+// DOCKER_ENV_REPLACE_* configuration at it plus a fresh output directory.
 // It returns the input and output paths.
 func freshInputDir(t *testing.T) (string, string) {
 	root := t.TempDir()
@@ -537,7 +539,7 @@ func TestFailedRunLeavesOutputIntact(t *testing.T) {
 
 	// No temporary directory may linger next to the output.
 	for _, name := range listFiles(t, filepath.Dir(outDir)) {
-		if strings.HasPrefix(name, ".envreplace-tmp-") {
+		if strings.HasPrefix(name, ".docker-env-replace-tmp-") {
 			t.Errorf("temporary directory left behind: %s", name)
 		}
 	}
@@ -697,22 +699,22 @@ func TestPermissionsPreserved(t *testing.T) {
 	}
 }
 
-func TestTokenMayReferenceEnvReplaceVar(t *testing.T) {
+func TestTokenMayReferenceConfigPrefixedVar(t *testing.T) {
 	envMu.Lock()
 	defer envMu.Unlock()
 	inDir, outDir := freshInputDir(t)
 
-	// A variable whose name starts with ENVREPLACE_ is an ordinary
+	// A variable whose name starts with DOCKER_ENV_REPLACE_ is an ordinary
 	// variable: tokens referring to it are resolved normally.
-	t.Setenv("ENVREPLACE_CUSTOM_FLAVOR", "vanilla")
-	writeFile(t, filepath.Join(inDir, "flavor.txt"), "flavor=<ENVREPLACE_CUSTOM_FLAVOR>")
+	t.Setenv("DOCKER_ENV_REPLACE_CUSTOM_FLAVOR", "vanilla")
+	writeFile(t, filepath.Join(inDir, "flavor.txt"), "flavor=<DOCKER_ENV_REPLACE_CUSTOM_FLAVOR>")
 
 	if err := runHelper(t); err != nil {
 		t.Fatal(err)
 	}
 
 	if got := readText(t, filepath.Join(outDir, "flavor.txt")); got != "flavor=vanilla" {
-		t.Errorf("ENVREPLACE_ variable replacement = %q", got)
+		t.Errorf("DOCKER_ENV_REPLACE_ variable replacement = %q", got)
 	}
 }
 
@@ -800,6 +802,163 @@ func TestExistingOutputDirNotReplaced(t *testing.T) {
 	}
 }
 
+func TestLogUsesFinalOutputPaths(t *testing.T) {
+	envMu.Lock()
+	defer envMu.Unlock()
+	inDir, outDir := freshInputDir(t)
+
+	v := freshVar("LOG")
+	t.Setenv(v, "x")
+	writeFile(t, filepath.Join(inDir, "sub", "nested.conf"), "v=<"+v+">")
+	writeFile(t, filepath.Join(inDir, "target.txt"), "plain")
+	if err := os.Symlink("target.txt", filepath.Join(inDir, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Files are written to a temporary directory that is renamed or
+	// swapped into place at the end of the run. A log line exposing
+	// that temporary path would name a location that no longer exists
+	// once the run finishes, so the displayed path must always be the
+	// final destination under the output directory.
+	var buf strings.Builder
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+
+	check := func(run string) {
+		output := buf.String()
+		if strings.Contains(output, ".docker-env-replace-tmp-") {
+			t.Errorf("%s: log output exposes the temporary directory:\n%s", run, output)
+		}
+		want := filepath.Join(outDir, "sub", "nested.conf")
+		if !strings.Contains(output, " -> "+want) {
+			t.Errorf("%s: log output %q does not show the final path %q", run, output, want)
+		}
+		wantLink := filepath.Join(outDir, "link.txt")
+		if !strings.Contains(output, " -> "+wantLink) {
+			t.Errorf("%s: log output %q does not show the final symlink path %q", run, output, wantLink)
+		}
+		buf.Reset()
+	}
+
+	// First run: the output directory does not exist yet, so the
+	// temporary directory is created as its sibling and renamed over.
+	if err := runHelper(t); err != nil {
+		t.Fatal(err)
+	}
+	check("sibling swap")
+
+	// Second run: the output directory now exists, so the temporary
+	// directory is created inside it and its entries are swapped in.
+	if err := runHelper(t); err != nil {
+		t.Fatal(err)
+	}
+	check("in-place swap")
+}
+
+func TestWriteErrorNamesFinalOutputPath(t *testing.T) {
+	envMu.Lock()
+	defer envMu.Unlock()
+	root := t.TempDir()
+
+	cfg := config{prefix: defaultPrefix, suffix: defaultSuffix, emptyValue: defaultEmptyValue}
+	inFile := filepath.Join(root, "in.txt")
+	writeFile(t, inFile, "hello")
+
+	// Writing the output file legitimately happens on a path inside a
+	// temporary directory that is swapped away at the end of the run. To
+	// exercise the error path deterministically on every platform and
+	// regardless of whether the tests run as root, point the output path
+	// at a directory that does not exist: os.Create then always fails.
+	tmpName := filepath.Join(root, ".docker-env-replace-tmp-missing")
+	outPath := filepath.Join(tmpName, "nested", "out.txt")
+	displayPath := filepath.Join(root, "output", "nested", "out.txt")
+
+	err := processFile(cfg, inFile, outPath, displayPath, 0644)
+	if err == nil {
+		t.Fatal("processFile succeeded, want a write error")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, ".docker-env-replace-tmp-") {
+		t.Errorf("write error exposes the temporary directory: %q", msg)
+	}
+	if !strings.Contains(msg, displayPath) {
+		t.Errorf("write error %q does not name the final output path %q", msg, displayPath)
+	}
+}
+
+func TestMkdirErrorNamesFinalOutputPath(t *testing.T) {
+	envMu.Lock()
+	defer envMu.Unlock()
+	root := t.TempDir()
+
+	cfg := config{prefix: defaultPrefix, suffix: defaultSuffix, emptyValue: defaultEmptyValue}
+	srcRoot := filepath.Join(root, "input")
+	if err := os.MkdirAll(filepath.Join(srcRoot, "sub"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(srcRoot, "sub", "a.txt"), "x")
+
+	// A regular file at the path where the subdirectory must be created
+	// makes os.Mkdir fail deterministically, on every platform and
+	// regardless of whether the tests run as root.
+	dstRoot := filepath.Join(root, ".docker-env-replace-tmp-collide")
+	if err := os.MkdirAll(dstRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dstRoot, "sub"), "not a directory")
+
+	finalRoot := filepath.Join(root, "output")
+
+	err := processTree(cfg, srcRoot, dstRoot, finalRoot)
+	if err == nil {
+		t.Fatal("processTree succeeded, want a mkdir error")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, ".docker-env-replace-tmp-") {
+		t.Errorf("mkdir error exposes the temporary directory: %q", msg)
+	}
+	want := filepath.Join(finalRoot, "sub")
+	if !strings.Contains(msg, want) {
+		t.Errorf("mkdir error %q does not name the final output path %q", msg, want)
+	}
+}
+
+func TestFinalPathErrorPreservesChain(t *testing.T) {
+	outPath := "/tmp/build/x"
+	displayPath := "/out/x"
+	inner := &fs.PathError{Op: "open", Path: outPath, Err: fs.ErrNotExist}
+	err := finalPathError(outPath, displayPath, inner)
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("errors.Is(err, fs.ErrNotExist) = false, want true")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, displayPath) {
+		t.Errorf("error %q does not name the display path %q", msg, displayPath)
+	}
+	if strings.Contains(msg, outPath) {
+		t.Errorf("error %q still names the temp path %q", msg, outPath)
+	}
+}
+
+func TestFinalPathErrorAddsContextWhenPathAbsent(t *testing.T) {
+	outPath := "/tmp/build/x"
+	displayPath := "/out/x"
+	err := finalPathError(outPath, displayPath, fs.ErrNotExist)
+	// fs.ErrNotExist's message does not name outPath, so finalPathError
+	// takes the fallback branch and prefixes displayPath as context.
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("errors.Is(err, fs.ErrNotExist) = false, want true")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, displayPath) {
+		t.Errorf("error %q does not name the display path %q", msg, displayPath)
+	}
+	if strings.Contains(msg, outPath) {
+		t.Errorf("error %q still names the temp path %q", msg, outPath)
+	}
+}
+
 func TestOutputParentNotWritable(t *testing.T) {
 	envMu.Lock()
 	defer envMu.Unlock()
@@ -851,7 +1010,7 @@ func TestOutputParentNotWritable(t *testing.T) {
 		t.Errorf("stale output file was not removed")
 	}
 	for _, name := range listFiles(t, outDir) {
-		if strings.HasPrefix(name, ".envreplace-tmp-") {
+		if strings.HasPrefix(name, ".docker-env-replace-tmp-") {
 			t.Errorf("temporary directory left behind: %s", name)
 		}
 	}

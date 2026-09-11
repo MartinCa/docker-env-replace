@@ -1,8 +1,8 @@
-# Example input templates for envreplace.
+# Example input templates for docker-env-replace.
 #
 # Files in input/ are read-only inputs. Run the container with
-#   ENVREPLACE_INPUT_DIR=/input
-#   ENVREPLACE_OUTPUT_DIR=/output
+#   DOCKER_ENV_REPLACE_INPUT_DIR=/input
+#   DOCKER_ENV_REPLACE_OUTPUT_DIR=/output
 # and the substituted copies appear in /output with the same tree
 # structure. There are two demonstrations:
 #

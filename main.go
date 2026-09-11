@@ -1,7 +1,7 @@
-// Copyright 2026 The envreplace authors. All rights reserved.
+// Copyright 2026 The docker-env-replace authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license.
 
-// Package main provides envreplace, a minimal utility that performs
+// Package main provides docker-env-replace, a minimal utility that performs
 // environment-variable token replacement in files. It is intended for
 // use as a Docker Compose init container: it reads a tree of template
 // files from an input directory and writes a fully substituted copy to
@@ -24,7 +24,7 @@ import (
 
 // config holds the settings for a single run, all read from the
 // environment. Every utility configuration variable uses the
-// ENVREPLACE_ prefix; any other environment variable may be referenced
+// DOCKER_ENV_REPLACE_ prefix; any other environment variable may be referenced
 // by tokens in the input files.
 type config struct {
 	inputDir   string
@@ -36,11 +36,11 @@ type config struct {
 
 // The names of the environment variables that configure the utility.
 const (
-	envInputDir   = "ENVREPLACE_INPUT_DIR"
-	envOutputDir  = "ENVREPLACE_OUTPUT_DIR"
-	envPrefix     = "ENVREPLACE_TOKEN_PREFIX"
-	envSuffix     = "ENVREPLACE_TOKEN_SUFFIX"
-	envEmptyValue = "ENVREPLACE_EMPTY_VALUE"
+	envInputDir   = "DOCKER_ENV_REPLACE_INPUT_DIR"
+	envOutputDir  = "DOCKER_ENV_REPLACE_OUTPUT_DIR"
+	envPrefix     = "DOCKER_ENV_REPLACE_TOKEN_PREFIX"
+	envSuffix     = "DOCKER_ENV_REPLACE_TOKEN_SUFFIX"
+	envEmptyValue = "DOCKER_ENV_REPLACE_EMPTY_VALUE"
 
 	defaultInputDir   = "/input"
 	defaultOutputDir  = "/output"
@@ -62,10 +62,10 @@ func strOrDefault(key, fallback string) string {
 // loadConfig reads the utility's configuration from the environment.
 func loadConfig() (config, error) {
 	if v, ok := os.LookupEnv(envPrefix); ok && v == "" {
-		return config{}, errors.New("ENVREPLACE_TOKEN_PREFIX cannot be set to the empty string")
+		return config{}, errors.New("DOCKER_ENV_REPLACE_TOKEN_PREFIX cannot be set to the empty string")
 	}
 	if v, ok := os.LookupEnv(envSuffix); ok && v == "" {
-		return config{}, errors.New("ENVREPLACE_TOKEN_SUFFIX cannot be set to the empty string")
+		return config{}, errors.New("DOCKER_ENV_REPLACE_TOKEN_SUFFIX cannot be set to the empty string")
 	}
 	prefix := strOrDefault(envPrefix, defaultPrefix)
 	suffix := strOrDefault(envSuffix, defaultSuffix)
@@ -165,18 +165,18 @@ func run(cfg config) error {
 	var tmp string
 	inPlace := outputExists
 	if inPlace {
-		tmp, err = os.MkdirTemp(outputDir, ".envreplace-tmp-")
+		tmp, err = os.MkdirTemp(outputDir, ".docker-env-replace-tmp-")
 		if err != nil {
 			return errors.New("cannot create temporary directory in " + outputDir + ": " + err.Error())
 		}
 	} else {
-		tmp, err = os.MkdirTemp(parent, ".envreplace-tmp-")
+		tmp, err = os.MkdirTemp(parent, ".docker-env-replace-tmp-")
 		if err != nil {
 			return errors.New("cannot create temporary directory in " + parent + ": " + err.Error())
 		}
 	}
 
-	err = processTree(cfg, inputDir, tmp)
+	err = processTree(cfg, inputDir, tmp, outputDir)
 	if err == nil {
 		if inPlace {
 			err = swapInPlace(outputDir, tmp, fi.Mode().Perm())
@@ -197,9 +197,9 @@ func run(cfg config) error {
 func swapSibling(outputDir, tmp string, perm fs.FileMode) error {
 	// Mirror the permissions of the input root directory.
 	if err := os.Chmod(tmp, perm); err != nil {
-		return err
+		return finalPathError(tmp, outputDir, err)
 	}
-	return os.Rename(tmp, outputDir)
+	return finalPathError(tmp, outputDir, os.Rename(tmp, outputDir))
 }
 
 // swapInPlace replaces the contents of outputDir with the contents of
@@ -226,24 +226,60 @@ func swapInPlace(outputDir, tmp string, perm fs.FileMode) error {
 	}
 	newEntries, err := os.ReadDir(tmp)
 	if err != nil {
-		return err
+		return finalPathError(tmp, outputDir, err)
 	}
 	for _, e := range newEntries {
-		if err := os.Rename(filepath.Join(tmp, e.Name()), filepath.Join(outputDir, e.Name())); err != nil {
-			return err
+		from := filepath.Join(tmp, e.Name())
+		to := filepath.Join(outputDir, e.Name())
+		if err := os.Rename(from, to); err != nil {
+			return finalPathError(from, to, err)
 		}
 	}
 	if err := os.Remove(tmp); err != nil {
-		return err
+		return finalPathError(tmp, outputDir, err)
 	}
 	// Mirror the permissions of the input root directory.
 	return os.Chmod(outputDir, perm)
 }
 
+// finalPathError rewrites a filesystem error from an operation on
+// outPath, a path inside the temporary build directory, to name
+// displayPath instead -- the path where the entry will ultimately
+// appear once the temporary directory is renamed or swapped into place.
+// The operation itself is still performed on outPath; the rewrite is for
+// display only, so the user never sees a temporary path that no longer
+// exists after the run finishes. When the underlying error does not name
+// the path at all, displayPath is added as context.
+func finalPathError(outPath, displayPath string, err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := strings.ReplaceAll(err.Error(), outPath, displayPath)
+	if msg == err.Error() {
+		return fmt.Errorf("%s: %w", displayPath, err)
+	}
+	return &pathRewriteError{msg: msg, err: err}
+}
+
+// pathRewriteError carries a rewritten error message for display while
+// unwrapping to the original error, so errors.Is and errors.As still
+// work on the underlying cause (e.g. fs.ErrNotExist).
+type pathRewriteError struct {
+	msg string
+	err error
+}
+
+func (e *pathRewriteError) Error() string { return e.msg }
+func (e *pathRewriteError) Unwrap() error { return e.err }
+
 // processTree mirrors srcRoot into dstRoot, substituting tokens in
-// regular text files. It returns the first error encountered. The
+// regular text files. finalRoot is the path under which dstRoot's
+// entries will ultimately appear (the output directory); it is used
+// only for display in log messages and error messages, since dstRoot
+// itself is a temporary directory that is renamed or swapped away
+// before the run finishes. It returns the first error encountered. The
 // source tree is never modified; it is only read.
-func processTree(cfg config, srcRoot, dstRoot string) error {
+func processTree(cfg config, srcRoot, dstRoot, finalRoot string) error {
 	return filepath.WalkDir(srcRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -251,10 +287,10 @@ func processTree(cfg config, srcRoot, dstRoot string) error {
 		if path == srcRoot {
 			return nil
 		}
-		// Defense in depth: never mirror an envreplace temporary
+		// Defense in depth: never mirror a docker-env-replace temporary
 		// directory that somehow appears inside the input tree.
-		if strings.HasPrefix(d.Name(), ".envreplace-tmp-") {
-			log.Printf("  Skipped envreplace temporary entry: %s", path)
+		if strings.HasPrefix(d.Name(), ".docker-env-replace-tmp-") {
+			log.Printf("  Skipped docker-env-replace temporary entry: %s", path)
 			if d.IsDir() {
 				return filepath.SkipDir
 			}
@@ -265,6 +301,10 @@ func processTree(cfg config, srcRoot, dstRoot string) error {
 			return err
 		}
 		outPath := filepath.Join(dstRoot, rel)
+		// Log the path where the entry will end up, not the temporary
+		// path it is written to: the latter ceases to exist when the
+		// output is swapped into place.
+		displayPath := filepath.Join(finalRoot, rel)
 
 		info, err := d.Info()
 		if err != nil {
@@ -276,19 +316,19 @@ func processTree(cfg config, srcRoot, dstRoot string) error {
 			// Create explicitly with the input's permission bits; the
 			// mode argument of os.Mkdir is masked by the process umask.
 			if err := os.Mkdir(outPath, mode.Perm()); err != nil {
-				return err
+				return finalPathError(outPath, displayPath, err)
 			}
-			return os.Chmod(outPath, mode.Perm())
+			return finalPathError(outPath, displayPath, os.Chmod(outPath, mode.Perm()))
 		case mode&fs.ModeSymlink != 0:
-			return processSymlink(cfg, path, outPath)
+			return processSymlink(cfg, path, outPath, displayPath)
 		case !mode.IsRegular():
 			// FIFOs, sockets and devices cannot be mirrored
 			// meaningfully; skip them rather than fail.
 			log.Printf("  Skipped special file: %s", path)
 			return nil
 		default:
-			log.Printf("Processing: %s -> %s", path, outPath)
-			return processFile(cfg, path, outPath, mode.Perm())
+			log.Printf("Processing: %s -> %s", path, displayPath)
+			return processFile(cfg, path, outPath, displayPath, mode.Perm())
 		}
 	})
 }
@@ -298,8 +338,11 @@ func processTree(cfg config, srcRoot, dstRoot string) error {
 // special file is skipped (the tree is not followed); this is the
 // documented, usefully-simple behavior. A symlink whose target resolves
 // outside the input directory is a hard error: mirroring it would copy
-// files the input did not ask to be published.
-func processSymlink(cfg config, linkPath, outPath string) error {
+// files the input did not ask to be published. displayPath is where the
+// entry will ultimately appear under the output directory; it is used
+// only for log messages, since outPath lies inside a temporary
+// directory.
+func processSymlink(cfg config, linkPath, outPath, displayPath string) error {
 	target, err := os.Readlink(linkPath)
 	if err != nil {
 		return err
@@ -332,13 +375,17 @@ func processSymlink(cfg config, linkPath, outPath string) error {
 		log.Printf("  Skipped symlink to a special file: %s -> %s", linkPath, target)
 		return nil
 	}
-	log.Printf("Processing: %s -> %s (symlink to %s)", linkPath, outPath, resolved)
-	return processFile(cfg, resolved, outPath, mode.Perm())
+	log.Printf("Processing: %s -> %s (symlink to %s)", linkPath, displayPath, resolved)
+	return processFile(cfg, resolved, outPath, displayPath, mode.Perm())
 }
 
 // processFile reads inPath, substitutes tokens, and writes the result
 // to outPath. Permissions from perm are applied to the written file.
-func processFile(cfg config, inPath, outPath string, perm fs.FileMode) error {
+// displayPath is where the entry will ultimately appear under the
+// output directory; it is used only for display in error messages,
+// since outPath lies inside a temporary directory, and errors from the
+// write operations are rewritten to name it.
+func processFile(cfg config, inPath, outPath, displayPath string, perm fs.FileMode) error {
 	data, err := readWholeFile(inPath)
 	if err != nil {
 		return err
@@ -349,14 +396,14 @@ func processFile(cfg config, inPath, outPath string, perm fs.FileMode) error {
 	}
 	w, err := os.Create(outPath)
 	if err != nil {
-		return err
+		return finalPathError(outPath, displayPath, err)
 	}
 	defer w.Close()
 	if _, werr := w.Write(out); werr != nil {
-		return werr
+		return finalPathError(outPath, displayPath, werr)
 	}
 	if err := os.Chmod(outPath, perm); err != nil {
-		return err
+		return finalPathError(outPath, displayPath, err)
 	}
 	if binary {
 		log.Println("  Copied as binary (no replacements)")
@@ -500,17 +547,17 @@ func summarizeNames(names []string) string {
 	return b.String()
 }
 
-// main is the entry point of the envreplace executable. Processing logs
+// main is the entry point of the docker-env-replace executable. Processing logs
 // go to stdout; the fatal error is printed to stderr.
 func main() {
 	log.SetOutput(os.Stdout)
 	cfg, err := loadConfig()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "envreplace: "+err.Error())
+		fmt.Fprintln(os.Stderr, "docker-env-replace: "+err.Error())
 		os.Exit(1)
 	}
 	if err := run(cfg); err != nil {
-		fmt.Fprintln(os.Stderr, "envreplace: error: "+err.Error())
+		fmt.Fprintln(os.Stderr, "docker-env-replace: error: "+err.Error())
 		os.Exit(1)
 	}
 }
