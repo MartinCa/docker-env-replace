@@ -855,6 +855,74 @@ func TestLogUsesFinalOutputPaths(t *testing.T) {
 	check("in-place swap")
 }
 
+func TestWriteErrorNamesFinalOutputPath(t *testing.T) {
+	envMu.Lock()
+	defer envMu.Unlock()
+	root := t.TempDir()
+
+	cfg := config{prefix: defaultPrefix, suffix: defaultSuffix, emptyValue: defaultEmptyValue}
+	inFile := filepath.Join(root, "in.txt")
+	writeFile(t, inFile, "hello")
+
+	// Writing the output file legitimately happens on a path inside a
+	// temporary directory that is swapped away at the end of the run. To
+	// exercise the error path deterministically on every platform and
+	// regardless of whether the tests run as root, point the output path
+	// at a directory that does not exist: os.Create then always fails.
+	tmpName := filepath.Join(root, ".docker-env-replace-tmp-missing")
+	outPath := filepath.Join(tmpName, "nested", "out.txt")
+	displayPath := filepath.Join(root, "output", "nested", "out.txt")
+
+	err := processFile(cfg, inFile, outPath, displayPath, 0644)
+	if err == nil {
+		t.Fatal("processFile succeeded, want a write error")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, ".docker-env-replace-tmp-") {
+		t.Errorf("write error exposes the temporary directory: %q", msg)
+	}
+	if !strings.Contains(msg, displayPath) {
+		t.Errorf("write error %q does not name the final output path %q", msg, displayPath)
+	}
+}
+
+func TestMkdirErrorNamesFinalOutputPath(t *testing.T) {
+	envMu.Lock()
+	defer envMu.Unlock()
+	root := t.TempDir()
+
+	cfg := config{prefix: defaultPrefix, suffix: defaultSuffix, emptyValue: defaultEmptyValue}
+	srcRoot := filepath.Join(root, "input")
+	if err := os.MkdirAll(filepath.Join(srcRoot, "sub"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(srcRoot, "sub", "a.txt"), "x")
+
+	// A regular file at the path where the subdirectory must be created
+	// makes os.Mkdir fail deterministically, on every platform and
+	// regardless of whether the tests run as root.
+	dstRoot := filepath.Join(root, ".docker-env-replace-tmp-collide")
+	if err := os.MkdirAll(dstRoot, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dstRoot, "sub"), "not a directory")
+
+	finalRoot := filepath.Join(root, "output")
+
+	err := processTree(cfg, srcRoot, dstRoot, finalRoot)
+	if err == nil {
+		t.Fatal("processTree succeeded, want a mkdir error")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, ".docker-env-replace-tmp-") {
+		t.Errorf("mkdir error exposes the temporary directory: %q", msg)
+	}
+	want := filepath.Join(finalRoot, "sub")
+	if !strings.Contains(msg, want) {
+		t.Errorf("mkdir error %q does not name the final output path %q", msg, want)
+	}
+}
+
 func TestOutputParentNotWritable(t *testing.T) {
 	envMu.Lock()
 	defer envMu.Unlock()

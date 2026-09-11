@@ -197,9 +197,9 @@ func run(cfg config) error {
 func swapSibling(outputDir, tmp string, perm fs.FileMode) error {
 	// Mirror the permissions of the input root directory.
 	if err := os.Chmod(tmp, perm); err != nil {
-		return err
+		return finalPathError(tmp, outputDir, err)
 	}
-	return os.Rename(tmp, outputDir)
+	return finalPathError(tmp, outputDir, os.Rename(tmp, outputDir))
 }
 
 // swapInPlace replaces the contents of outputDir with the contents of
@@ -226,27 +226,48 @@ func swapInPlace(outputDir, tmp string, perm fs.FileMode) error {
 	}
 	newEntries, err := os.ReadDir(tmp)
 	if err != nil {
-		return err
+		return finalPathError(tmp, outputDir, err)
 	}
 	for _, e := range newEntries {
-		if err := os.Rename(filepath.Join(tmp, e.Name()), filepath.Join(outputDir, e.Name())); err != nil {
-			return err
+		from := filepath.Join(tmp, e.Name())
+		to := filepath.Join(outputDir, e.Name())
+		if err := os.Rename(from, to); err != nil {
+			return finalPathError(from, to, err)
 		}
 	}
 	if err := os.Remove(tmp); err != nil {
-		return err
+		return finalPathError(tmp, outputDir, err)
 	}
 	// Mirror the permissions of the input root directory.
 	return os.Chmod(outputDir, perm)
 }
 
+// finalPathError rewrites a filesystem error from an operation on
+// outPath, a path inside the temporary build directory, to name
+// displayPath instead -- the path where the entry will ultimately
+// appear once the temporary directory is renamed or swapped into place.
+// The operation itself is still performed on outPath; the rewrite is for
+// display only, so the user never sees a temporary path that no longer
+// exists after the run finishes. When the underlying error does not name
+// the path at all, displayPath is added as context.
+func finalPathError(outPath, displayPath string, err error) error {
+	if err == nil {
+		return nil
+	}
+	msg := strings.ReplaceAll(err.Error(), outPath, displayPath)
+	if msg == err.Error() {
+		return fmt.Errorf("%s: %s", displayPath, msg)
+	}
+	return errors.New(msg)
+}
+
 // processTree mirrors srcRoot into dstRoot, substituting tokens in
 // regular text files. finalRoot is the path under which dstRoot's
 // entries will ultimately appear (the output directory); it is used
-// only for display in log messages, since dstRoot itself is a
-// temporary directory that is renamed or swapped away before the run
-// finishes. It returns the first error encountered. The source tree is
-// never modified; it is only read.
+// only for display in log messages and error messages, since dstRoot
+// itself is a temporary directory that is renamed or swapped away
+// before the run finishes. It returns the first error encountered. The
+// source tree is never modified; it is only read.
 func processTree(cfg config, srcRoot, dstRoot, finalRoot string) error {
 	return filepath.WalkDir(srcRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -284,9 +305,9 @@ func processTree(cfg config, srcRoot, dstRoot, finalRoot string) error {
 			// Create explicitly with the input's permission bits; the
 			// mode argument of os.Mkdir is masked by the process umask.
 			if err := os.Mkdir(outPath, mode.Perm()); err != nil {
-				return err
+				return finalPathError(outPath, displayPath, err)
 			}
-			return os.Chmod(outPath, mode.Perm())
+			return finalPathError(outPath, displayPath, os.Chmod(outPath, mode.Perm()))
 		case mode&fs.ModeSymlink != 0:
 			return processSymlink(cfg, path, outPath, displayPath)
 		case !mode.IsRegular():
@@ -296,7 +317,7 @@ func processTree(cfg config, srcRoot, dstRoot, finalRoot string) error {
 			return nil
 		default:
 			log.Printf("Processing: %s -> %s", path, displayPath)
-			return processFile(cfg, path, outPath, mode.Perm())
+			return processFile(cfg, path, outPath, displayPath, mode.Perm())
 		}
 	})
 }
@@ -344,12 +365,16 @@ func processSymlink(cfg config, linkPath, outPath, displayPath string) error {
 		return nil
 	}
 	log.Printf("Processing: %s -> %s (symlink to %s)", linkPath, displayPath, resolved)
-	return processFile(cfg, resolved, outPath, mode.Perm())
+	return processFile(cfg, resolved, outPath, displayPath, mode.Perm())
 }
 
 // processFile reads inPath, substitutes tokens, and writes the result
 // to outPath. Permissions from perm are applied to the written file.
-func processFile(cfg config, inPath, outPath string, perm fs.FileMode) error {
+// displayPath is where the entry will ultimately appear under the
+// output directory; it is used only for display in error messages,
+// since outPath lies inside a temporary directory, and errors from the
+// write operations are rewritten to name it.
+func processFile(cfg config, inPath, outPath, displayPath string, perm fs.FileMode) error {
 	data, err := readWholeFile(inPath)
 	if err != nil {
 		return err
@@ -360,14 +385,14 @@ func processFile(cfg config, inPath, outPath string, perm fs.FileMode) error {
 	}
 	w, err := os.Create(outPath)
 	if err != nil {
-		return err
+		return finalPathError(outPath, displayPath, err)
 	}
 	defer w.Close()
 	if _, werr := w.Write(out); werr != nil {
-		return werr
+		return finalPathError(outPath, displayPath, werr)
 	}
 	if err := os.Chmod(outPath, perm); err != nil {
-		return err
+		return finalPathError(outPath, displayPath, err)
 	}
 	if binary {
 		log.Println("  Copied as binary (no replacements)")
