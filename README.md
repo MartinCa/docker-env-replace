@@ -78,6 +78,16 @@ of that name, exactly like any other token.
    old output is removed *before* the rename, a rename failure (for
    example, a vanished parent directory) can leave no output at all;
    there is no way to rename over a non-empty directory.
+   If the output directory's parent is not writable — for example, a
+   container where the output directory is a writable mounted volume but
+   its parent (such as `/`) is a read-only root filesystem — but the
+   output directory itself already exists, the temporary directory is
+   built inside it instead and its entries are swapped in individually
+   rather than by a single rename. This is not fully atomic: a failure
+   partway through the swap can leave the output directory with a mix of
+   old and new entries. If the output directory does not exist yet in
+   this situation, the run still fails, since there is nowhere writable
+   to build it.
 7. **Permissions.** File and directory permission bits are preserved
    from the input where practical.
 8. **Symlinks.** A symbolic link to a file is followed and its target's

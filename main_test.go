@@ -752,3 +752,102 @@ func TestUnclosedDelimiterLeftAlone(t *testing.T) {
 		t.Errorf("unclosed delimiter content = %q", got)
 	}
 }
+
+func TestOutputParentNotWritable(t *testing.T) {
+	envMu.Lock()
+	defer envMu.Unlock()
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permission bits")
+	}
+
+	root := t.TempDir()
+	parent := filepath.Join(root, "parent")
+	if err := os.MkdirAll(parent, 0755); err != nil {
+		t.Fatal(err)
+	}
+	inDir := filepath.Join(root, "input")
+	// The output directory itself is writable, but its parent is not:
+	// this mirrors a container where the output directory is a writable
+	// mounted volume but its parent (e.g. "/") is read-only.
+	outDir := filepath.Join(parent, "output")
+	if err := os.MkdirAll(inDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, 0555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(parent, 0755) })
+
+	t.Setenv(envInputDir, inDir)
+	t.Setenv(envOutputDir, outDir)
+	t.Setenv(envPrefix, defaultPrefix)
+	t.Setenv(envSuffix, defaultSuffix)
+	t.Setenv(envEmptyValue, defaultEmptyValue)
+
+	v := freshVar("INPLACE")
+	t.Setenv(v, "swapped")
+	writeFile(t, filepath.Join(inDir, "a.txt"), "<"+v+">")
+	// A stale file that must be removed by the swap.
+	writeFile(t, filepath.Join(outDir, "stale.txt"), "stale")
+
+	if err := runHelper(t); err != nil {
+		t.Fatalf("run failed with an unwritable output parent: %v", err)
+	}
+
+	if got := readText(t, filepath.Join(outDir, "a.txt")); got != "swapped" {
+		t.Errorf("output content = %q, want %q", got, "swapped")
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "stale.txt")); err == nil {
+		t.Errorf("stale output file was not removed")
+	}
+	for _, name := range listFiles(t, outDir) {
+		if strings.HasPrefix(name, ".envreplace-tmp-") {
+			t.Errorf("temporary directory left behind: %s", name)
+		}
+	}
+}
+
+func TestOutputParentNotWritableAndOutputMissing(t *testing.T) {
+	envMu.Lock()
+	defer envMu.Unlock()
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permission bits")
+	}
+
+	root := t.TempDir()
+	parent := filepath.Join(root, "parent")
+	if err := os.MkdirAll(parent, 0755); err != nil {
+		t.Fatal(err)
+	}
+	inDir := filepath.Join(root, "input")
+	// The output directory does not exist yet, so there is nothing to
+	// build the swap inside: this must still fail, unlike the case
+	// where the output directory already exists.
+	outDir := filepath.Join(parent, "output")
+	if err := os.MkdirAll(inDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(parent, 0555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(parent, 0755) })
+
+	t.Setenv(envInputDir, inDir)
+	t.Setenv(envOutputDir, outDir)
+	t.Setenv(envPrefix, defaultPrefix)
+	t.Setenv(envSuffix, defaultSuffix)
+	t.Setenv(envEmptyValue, defaultEmptyValue)
+
+	writeFile(t, filepath.Join(inDir, "a.txt"), "x")
+
+	err := runHelper(t)
+	if err == nil {
+		t.Fatal("run succeeded, want error: output missing and its parent is not writable")
+	}
+	if !strings.Contains(err.Error(), "cannot create temporary directory") {
+		t.Errorf("error %q does not mention the temporary directory", err.Error())
+	}
+}

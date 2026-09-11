@@ -143,35 +143,102 @@ func run(cfg config) error {
 		return errors.New("output directory's parent is not a directory: " + parent)
 	}
 
-	// Build the complete result in a temporary directory that is a
-	// sibling of the output directory, then swap it into place.
+	outputExists := false
+	if ofi, err := os.Stat(outputDir); err == nil {
+		if !ofi.IsDir() {
+			return errors.New("output path " + outputDir + " exists and is not a directory")
+		}
+		outputExists = true
+	}
+
+	// Build the complete result in a temporary directory, then swap it
+	// into place. Ordinarily the temporary directory is a sibling of the
+	// output directory, so the swap is a single rename. But the parent
+	// of the output directory is sometimes not writable even though the
+	// output directory itself is (for example, a container where the
+	// output directory is a mounted volume but "/" is read-only). When
+	// that happens and the output directory already exists, the
+	// temporary directory is built inside it instead, and its entries
+	// are swapped in individually.
 	tmp, err := os.MkdirTemp(parent, ".envreplace-tmp-")
+	inPlace := false
 	if err != nil {
-		return errors.New("cannot create temporary directory in " + parent + ": " + err.Error())
+		if !outputExists || !errors.Is(err, fs.ErrPermission) {
+			return errors.New("cannot create temporary directory in " + parent + ": " + err.Error())
+		}
+		tmp, err = os.MkdirTemp(outputDir, ".envreplace-tmp-")
+		if err != nil {
+			return errors.New("cannot create temporary directory in " + outputDir + ": " + err.Error())
+		}
+		inPlace = true
 	}
 
 	err = processTree(cfg, inputDir, tmp)
 	if err == nil {
-		// Mirror the permissions of the input root directory.
-		err = os.Chmod(tmp, fi.Mode().Perm())
-	}
-	if err == nil {
-		// Output is replaced only after every file has been written.
-		// RemoveAll also removes a plain file sitting at outputDir.
-		if _, err := os.Stat(outputDir); err == nil {
-			if derr := os.RemoveAll(outputDir); derr != nil {
-				err = derr
-			}
+		if inPlace {
+			err = swapInPlace(outputDir, tmp, fi.Mode().Perm())
+		} else {
+			err = swapSibling(outputDir, tmp, fi.Mode().Perm())
 		}
-	}
-	if err == nil {
-		err = os.Rename(tmp, outputDir)
 	}
 	if err != nil {
 		os.RemoveAll(tmp)
 		return err
 	}
 	return nil
+}
+
+// swapSibling replaces outputDir with tmp, a sibling directory built by
+// processTree, removing any existing output first.
+func swapSibling(outputDir, tmp string, perm fs.FileMode) error {
+	// Mirror the permissions of the input root directory.
+	if err := os.Chmod(tmp, perm); err != nil {
+		return err
+	}
+	// Output is replaced only after every file has been written.
+	// RemoveAll also removes a plain file sitting at outputDir.
+	if _, err := os.Stat(outputDir); err == nil {
+		if err := os.RemoveAll(outputDir); err != nil {
+			return err
+		}
+	}
+	return os.Rename(tmp, outputDir)
+}
+
+// swapInPlace replaces the contents of outputDir with the contents of
+// tmp, a temporary directory built inside outputDir itself. It is used
+// when outputDir's parent is not writable, so outputDir cannot be
+// replaced wholesale by a sibling rename: existing entries are removed
+// first, then the new entries are moved in one at a time. A failure
+// partway through can leave outputDir with a mix of old and new entries.
+func swapInPlace(outputDir, tmp string, perm fs.FileMode) error {
+	entries, err := os.ReadDir(outputDir)
+	if err != nil {
+		return err
+	}
+	tmpName := filepath.Base(tmp)
+	for _, e := range entries {
+		if e.Name() == tmpName {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(outputDir, e.Name())); err != nil {
+			return err
+		}
+	}
+	newEntries, err := os.ReadDir(tmp)
+	if err != nil {
+		return err
+	}
+	for _, e := range newEntries {
+		if err := os.Rename(filepath.Join(tmp, e.Name()), filepath.Join(outputDir, e.Name())); err != nil {
+			return err
+		}
+	}
+	if err := os.Remove(tmp); err != nil {
+		return err
+	}
+	// Mirror the permissions of the input root directory.
+	return os.Chmod(outputDir, perm)
 }
 
 // processTree mirrors srcRoot into dstRoot, substituting tokens in
