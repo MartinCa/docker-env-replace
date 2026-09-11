@@ -9,6 +9,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -920,6 +921,41 @@ func TestMkdirErrorNamesFinalOutputPath(t *testing.T) {
 	want := filepath.Join(finalRoot, "sub")
 	if !strings.Contains(msg, want) {
 		t.Errorf("mkdir error %q does not name the final output path %q", msg, want)
+	}
+}
+
+func TestFinalPathErrorPreservesChain(t *testing.T) {
+	outPath := "/tmp/build/x"
+	displayPath := "/out/x"
+	inner := &fs.PathError{Op: "open", Path: outPath, Err: fs.ErrNotExist}
+	err := finalPathError(outPath, displayPath, inner)
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("errors.Is(err, fs.ErrNotExist) = false, want true")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, displayPath) {
+		t.Errorf("error %q does not name the display path %q", msg, displayPath)
+	}
+	if strings.Contains(msg, outPath) {
+		t.Errorf("error %q still names the temp path %q", msg, outPath)
+	}
+}
+
+func TestFinalPathErrorAddsContextWhenPathAbsent(t *testing.T) {
+	outPath := "/tmp/build/x"
+	displayPath := "/out/x"
+	err := finalPathError(outPath, displayPath, fs.ErrNotExist)
+	// fs.ErrNotExist's message does not name outPath, so finalPathError
+	// takes the fallback branch and prefixes displayPath as context.
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("errors.Is(err, fs.ErrNotExist) = false, want true")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, displayPath) {
+		t.Errorf("error %q does not name the display path %q", msg, displayPath)
+	}
+	if strings.Contains(msg, outPath) {
+		t.Errorf("error %q still names the temp path %q", msg, outPath)
 	}
 }
 

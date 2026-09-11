@@ -256,10 +256,21 @@ func finalPathError(outPath, displayPath string, err error) error {
 	}
 	msg := strings.ReplaceAll(err.Error(), outPath, displayPath)
 	if msg == err.Error() {
-		return fmt.Errorf("%s: %s", displayPath, msg)
+		return fmt.Errorf("%s: %w", displayPath, err)
 	}
-	return errors.New(msg)
+	return &pathRewriteError{msg: msg, err: err}
 }
+
+// pathRewriteError carries a rewritten error message for display while
+// unwrapping to the original error, so errors.Is and errors.As still
+// work on the underlying cause (e.g. fs.ErrNotExist).
+type pathRewriteError struct {
+	msg string
+	err error
+}
+
+func (e *pathRewriteError) Error() string { return e.msg }
+func (e *pathRewriteError) Unwrap() error { return e.err }
 
 // processTree mirrors srcRoot into dstRoot, substituting tokens in
 // regular text files. finalRoot is the path under which dstRoot's
