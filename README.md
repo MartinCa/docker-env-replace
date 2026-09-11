@@ -118,7 +118,7 @@ of that name, exactly like any other token.
 ```yaml
 services:
   init:
-    image: ghcr.io/MartinCa/docker-env-replace:latest
+    image: ghcr.io/martinca/docker-env-replace:latest
     env_file: .env
     environment:
       ENVREPLACE_INPUT_DIR: /input
