@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 )
 
@@ -100,6 +101,20 @@ func setUnset(t *testing.T, key string) {
 			os.Unsetenv(key)
 		}
 	})
+}
+
+// inode returns the inode number of path, to check whether a directory
+// entry was reused in place or replaced by a different one.
+func inode(t *testing.T, path string) uint64 {
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatalf("stat info for %s is not a *syscall.Stat_t", path)
+	}
+	return st.Ino
 }
 
 // listFiles returns the (unsorted) names of the entries of dir.
@@ -750,6 +765,38 @@ func TestUnclosedDelimiterLeftAlone(t *testing.T) {
 
 	if got := readText(t, filepath.Join(outDir, "math.txt")); got != "a < b and c\n" {
 		t.Errorf("unclosed delimiter content = %q", got)
+	}
+}
+
+func TestExistingOutputDirNotReplaced(t *testing.T) {
+	envMu.Lock()
+	defer envMu.Unlock()
+	inDir, outDir := freshInputDir(t)
+
+	v := freshVar("STABLE")
+	t.Setenv(v, "one")
+	writeFile(t, filepath.Join(inDir, "a.txt"), "<"+v+">")
+
+	if err := runHelper(t); err != nil {
+		t.Fatal(err)
+	}
+	firstIno := inode(t, outDir)
+
+	// A pre-existing output directory is very often a mount point (a
+	// Docker volume mounted directly at the output path in a real
+	// container). It must never be removed or renamed over on a later
+	// run -- only its contents may change -- or the swap fails with
+	// "device or resource busy" against a real mount.
+	t.Setenv(v, "two")
+	if err := runHelper(t); err != nil {
+		t.Fatal(err)
+	}
+	secondIno := inode(t, outDir)
+	if firstIno != secondIno {
+		t.Errorf("output directory was replaced (inode %d -> %d); it must be reused in place", firstIno, secondIno)
+	}
+	if got := readText(t, filepath.Join(outDir, "a.txt")); got != "two" {
+		t.Errorf("output content = %q, want %q", got, "two")
 	}
 }
 

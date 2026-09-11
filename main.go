@@ -152,25 +152,28 @@ func run(cfg config) error {
 	}
 
 	// Build the complete result in a temporary directory, then swap it
-	// into place. Ordinarily the temporary directory is a sibling of the
-	// output directory, so the swap is a single rename. But the parent
-	// of the output directory is sometimes not writable even though the
-	// output directory itself is (for example, a container where the
-	// output directory is a mounted volume but "/" is read-only). When
-	// that happens and the output directory already exists, the
-	// temporary directory is built inside it instead, and its entries
-	// are swapped in individually.
-	tmp, err := os.MkdirTemp(parent, ".envreplace-tmp-")
-	inPlace := false
-	if err != nil {
-		if !outputExists || !errors.Is(err, fs.ErrPermission) {
-			return errors.New("cannot create temporary directory in " + parent + ": " + err.Error())
-		}
+	// into place. When the output directory does not exist yet, the
+	// temporary directory is created as its sibling and a single rename
+	// creates the output directory. But when the output directory
+	// already exists, it is very often a mount point (a Docker volume
+	// mounted directly at, say, "/output"): its parent may not be
+	// writable (e.g. "/" in a read-only container), and even when it is,
+	// a mount point cannot be removed or renamed over — only its
+	// contents can be changed. So whenever the output directory already
+	// exists, the temporary directory is built inside it instead, and
+	// its entries are swapped in individually.
+	var tmp string
+	inPlace := outputExists
+	if inPlace {
 		tmp, err = os.MkdirTemp(outputDir, ".envreplace-tmp-")
 		if err != nil {
 			return errors.New("cannot create temporary directory in " + outputDir + ": " + err.Error())
 		}
-		inPlace = true
+	} else {
+		tmp, err = os.MkdirTemp(parent, ".envreplace-tmp-")
+		if err != nil {
+			return errors.New("cannot create temporary directory in " + parent + ": " + err.Error())
+		}
 	}
 
 	err = processTree(cfg, inputDir, tmp)
@@ -188,29 +191,25 @@ func run(cfg config) error {
 	return nil
 }
 
-// swapSibling replaces outputDir with tmp, a sibling directory built by
-// processTree, removing any existing output first.
+// swapSibling creates outputDir by renaming tmp, a sibling directory
+// built by processTree. It is used only when outputDir does not already
+// exist, so the rename cannot collide with an existing mount point.
 func swapSibling(outputDir, tmp string, perm fs.FileMode) error {
 	// Mirror the permissions of the input root directory.
 	if err := os.Chmod(tmp, perm); err != nil {
 		return err
-	}
-	// Output is replaced only after every file has been written.
-	// RemoveAll also removes a plain file sitting at outputDir.
-	if _, err := os.Stat(outputDir); err == nil {
-		if err := os.RemoveAll(outputDir); err != nil {
-			return err
-		}
 	}
 	return os.Rename(tmp, outputDir)
 }
 
 // swapInPlace replaces the contents of outputDir with the contents of
 // tmp, a temporary directory built inside outputDir itself. It is used
-// when outputDir's parent is not writable, so outputDir cannot be
-// replaced wholesale by a sibling rename: existing entries are removed
-// first, then the new entries are moved in one at a time. A failure
-// partway through can leave outputDir with a mix of old and new entries.
+// whenever outputDir already exists: outputDir is very often a mount
+// point (a Docker volume mounted directly at the output path), which
+// cannot be removed or renamed over, only have its contents changed.
+// Existing entries are removed first, then the new entries are moved in
+// one at a time. A failure partway through can leave outputDir with a
+// mix of old and new entries.
 func swapInPlace(outputDir, tmp string, perm fs.FileMode) error {
 	entries, err := os.ReadDir(outputDir)
 	if err != nil {
