@@ -176,7 +176,7 @@ func run(cfg config) error {
 		}
 	}
 
-	err = processTree(cfg, inputDir, tmp)
+	err = processTree(cfg, inputDir, tmp, outputDir)
 	if err == nil {
 		if inPlace {
 			err = swapInPlace(outputDir, tmp, fi.Mode().Perm())
@@ -241,9 +241,13 @@ func swapInPlace(outputDir, tmp string, perm fs.FileMode) error {
 }
 
 // processTree mirrors srcRoot into dstRoot, substituting tokens in
-// regular text files. It returns the first error encountered. The
-// source tree is never modified; it is only read.
-func processTree(cfg config, srcRoot, dstRoot string) error {
+// regular text files. finalRoot is the path under which dstRoot's
+// entries will ultimately appear (the output directory); it is used
+// only for display in log messages, since dstRoot itself is a
+// temporary directory that is renamed or swapped away before the run
+// finishes. It returns the first error encountered. The source tree is
+// never modified; it is only read.
+func processTree(cfg config, srcRoot, dstRoot, finalRoot string) error {
 	return filepath.WalkDir(srcRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -265,6 +269,10 @@ func processTree(cfg config, srcRoot, dstRoot string) error {
 			return err
 		}
 		outPath := filepath.Join(dstRoot, rel)
+		// Log the path where the entry will end up, not the temporary
+		// path it is written to: the latter ceases to exist when the
+		// output is swapped into place.
+		displayPath := filepath.Join(finalRoot, rel)
 
 		info, err := d.Info()
 		if err != nil {
@@ -280,14 +288,14 @@ func processTree(cfg config, srcRoot, dstRoot string) error {
 			}
 			return os.Chmod(outPath, mode.Perm())
 		case mode&fs.ModeSymlink != 0:
-			return processSymlink(cfg, path, outPath)
+			return processSymlink(cfg, path, outPath, displayPath)
 		case !mode.IsRegular():
 			// FIFOs, sockets and devices cannot be mirrored
 			// meaningfully; skip them rather than fail.
 			log.Printf("  Skipped special file: %s", path)
 			return nil
 		default:
-			log.Printf("Processing: %s -> %s", path, outPath)
+			log.Printf("Processing: %s -> %s", path, displayPath)
 			return processFile(cfg, path, outPath, mode.Perm())
 		}
 	})
@@ -298,8 +306,11 @@ func processTree(cfg config, srcRoot, dstRoot string) error {
 // special file is skipped (the tree is not followed); this is the
 // documented, usefully-simple behavior. A symlink whose target resolves
 // outside the input directory is a hard error: mirroring it would copy
-// files the input did not ask to be published.
-func processSymlink(cfg config, linkPath, outPath string) error {
+// files the input did not ask to be published. displayPath is where the
+// entry will ultimately appear under the output directory; it is used
+// only for log messages, since outPath lies inside a temporary
+// directory.
+func processSymlink(cfg config, linkPath, outPath, displayPath string) error {
 	target, err := os.Readlink(linkPath)
 	if err != nil {
 		return err
@@ -332,7 +343,7 @@ func processSymlink(cfg config, linkPath, outPath string) error {
 		log.Printf("  Skipped symlink to a special file: %s -> %s", linkPath, target)
 		return nil
 	}
-	log.Printf("Processing: %s -> %s (symlink to %s)", linkPath, outPath, resolved)
+	log.Printf("Processing: %s -> %s (symlink to %s)", linkPath, displayPath, resolved)
 	return processFile(cfg, resolved, outPath, mode.Perm())
 }
 

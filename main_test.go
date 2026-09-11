@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -798,6 +799,60 @@ func TestExistingOutputDirNotReplaced(t *testing.T) {
 	if got := readText(t, filepath.Join(outDir, "a.txt")); got != "two" {
 		t.Errorf("output content = %q, want %q", got, "two")
 	}
+}
+
+func TestLogUsesFinalOutputPaths(t *testing.T) {
+	envMu.Lock()
+	defer envMu.Unlock()
+	inDir, outDir := freshInputDir(t)
+
+	v := freshVar("LOG")
+	t.Setenv(v, "x")
+	writeFile(t, filepath.Join(inDir, "sub", "nested.conf"), "v=<"+v+">")
+	writeFile(t, filepath.Join(inDir, "target.txt"), "plain")
+	if err := os.Symlink("target.txt", filepath.Join(inDir, "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Files are written to a temporary directory that is renamed or
+	// swapped into place at the end of the run. A log line exposing
+	// that temporary path would name a location that no longer exists
+	// once the run finishes, so the displayed path must always be the
+	// final destination under the output directory.
+	var buf strings.Builder
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prev) })
+
+	check := func(run string) {
+		output := buf.String()
+		if strings.Contains(output, ".docker-env-replace-tmp-") {
+			t.Errorf("%s: log output exposes the temporary directory:\n%s", run, output)
+		}
+		want := filepath.Join(outDir, "sub", "nested.conf")
+		if !strings.Contains(output, " -> "+want) {
+			t.Errorf("%s: log output %q does not show the final path %q", run, output, want)
+		}
+		wantLink := filepath.Join(outDir, "link.txt")
+		if !strings.Contains(output, " -> "+wantLink) {
+			t.Errorf("%s: log output %q does not show the final symlink path %q", run, output, wantLink)
+		}
+		buf.Reset()
+	}
+
+	// First run: the output directory does not exist yet, so the
+	// temporary directory is created as its sibling and renamed over.
+	if err := runHelper(t); err != nil {
+		t.Fatal(err)
+	}
+	check("sibling swap")
+
+	// Second run: the output directory now exists, so the temporary
+	// directory is created inside it and its entries are swapped in.
+	if err := runHelper(t); err != nil {
+		t.Fatal(err)
+	}
+	check("in-place swap")
 }
 
 func TestOutputParentNotWritable(t *testing.T) {
