@@ -1,7 +1,7 @@
-// Copyright 2026 The envreplace authors. All rights reserved.
+// Copyright 2026 The docker-env-replace authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license.
 
-// Package main provides envreplace, a minimal utility that performs
+// Package main provides docker-env-replace, a minimal utility that performs
 // environment-variable token replacement in files. It is intended for
 // use as a Docker Compose init container: it reads a tree of template
 // files from an input directory and writes a fully substituted copy to
@@ -24,7 +24,7 @@ import (
 
 // config holds the settings for a single run, all read from the
 // environment. Every utility configuration variable uses the
-// ENVREPLACE_ prefix; any other environment variable may be referenced
+// DOCKER_ENV_REPLACE_ prefix; any other environment variable may be referenced
 // by tokens in the input files.
 type config struct {
 	inputDir   string
@@ -36,11 +36,11 @@ type config struct {
 
 // The names of the environment variables that configure the utility.
 const (
-	envInputDir   = "ENVREPLACE_INPUT_DIR"
-	envOutputDir  = "ENVREPLACE_OUTPUT_DIR"
-	envPrefix     = "ENVREPLACE_TOKEN_PREFIX"
-	envSuffix     = "ENVREPLACE_TOKEN_SUFFIX"
-	envEmptyValue = "ENVREPLACE_EMPTY_VALUE"
+	envInputDir   = "DOCKER_ENV_REPLACE_INPUT_DIR"
+	envOutputDir  = "DOCKER_ENV_REPLACE_OUTPUT_DIR"
+	envPrefix     = "DOCKER_ENV_REPLACE_TOKEN_PREFIX"
+	envSuffix     = "DOCKER_ENV_REPLACE_TOKEN_SUFFIX"
+	envEmptyValue = "DOCKER_ENV_REPLACE_EMPTY_VALUE"
 
 	defaultInputDir   = "/input"
 	defaultOutputDir  = "/output"
@@ -62,10 +62,10 @@ func strOrDefault(key, fallback string) string {
 // loadConfig reads the utility's configuration from the environment.
 func loadConfig() (config, error) {
 	if v, ok := os.LookupEnv(envPrefix); ok && v == "" {
-		return config{}, errors.New("ENVREPLACE_TOKEN_PREFIX cannot be set to the empty string")
+		return config{}, errors.New("DOCKER_ENV_REPLACE_TOKEN_PREFIX cannot be set to the empty string")
 	}
 	if v, ok := os.LookupEnv(envSuffix); ok && v == "" {
-		return config{}, errors.New("ENVREPLACE_TOKEN_SUFFIX cannot be set to the empty string")
+		return config{}, errors.New("DOCKER_ENV_REPLACE_TOKEN_SUFFIX cannot be set to the empty string")
 	}
 	prefix := strOrDefault(envPrefix, defaultPrefix)
 	suffix := strOrDefault(envSuffix, defaultSuffix)
@@ -165,12 +165,12 @@ func run(cfg config) error {
 	var tmp string
 	inPlace := outputExists
 	if inPlace {
-		tmp, err = os.MkdirTemp(outputDir, ".envreplace-tmp-")
+		tmp, err = os.MkdirTemp(outputDir, ".docker-env-replace-tmp-")
 		if err != nil {
 			return errors.New("cannot create temporary directory in " + outputDir + ": " + err.Error())
 		}
 	} else {
-		tmp, err = os.MkdirTemp(parent, ".envreplace-tmp-")
+		tmp, err = os.MkdirTemp(parent, ".docker-env-replace-tmp-")
 		if err != nil {
 			return errors.New("cannot create temporary directory in " + parent + ": " + err.Error())
 		}
@@ -251,10 +251,10 @@ func processTree(cfg config, srcRoot, dstRoot string) error {
 		if path == srcRoot {
 			return nil
 		}
-		// Defense in depth: never mirror an envreplace temporary
+		// Defense in depth: never mirror a docker-env-replace temporary
 		// directory that somehow appears inside the input tree.
-		if strings.HasPrefix(d.Name(), ".envreplace-tmp-") {
-			log.Printf("  Skipped envreplace temporary entry: %s", path)
+		if strings.HasPrefix(d.Name(), ".docker-env-replace-tmp-") {
+			log.Printf("  Skipped docker-env-replace temporary entry: %s", path)
 			if d.IsDir() {
 				return filepath.SkipDir
 			}
@@ -500,17 +500,17 @@ func summarizeNames(names []string) string {
 	return b.String()
 }
 
-// main is the entry point of the envreplace executable. Processing logs
+// main is the entry point of the docker-env-replace executable. Processing logs
 // go to stdout; the fatal error is printed to stderr.
 func main() {
 	log.SetOutput(os.Stdout)
 	cfg, err := loadConfig()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "envreplace: "+err.Error())
+		fmt.Fprintln(os.Stderr, "docker-env-replace: "+err.Error())
 		os.Exit(1)
 	}
 	if err := run(cfg); err != nil {
-		fmt.Fprintln(os.Stderr, "envreplace: error: "+err.Error())
+		fmt.Fprintln(os.Stderr, "docker-env-replace: error: "+err.Error())
 		os.Exit(1)
 	}
 }

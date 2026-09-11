@@ -1,7 +1,7 @@
-// Copyright 2026 The envreplace authors. All rights reserved.
+// Copyright 2026 The docker-env-replace authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license.
 
-// Package main holds the tests for the envreplace utility. Every test
+// Package main holds the tests for the docker-env-replace utility. Every test
 // that reads or writes the process environment takes the envMu lock so
 // that the environment cannot change between a test's t.Setenv call and
 // its use of loadConfig/run.
@@ -20,7 +20,7 @@ import (
 )
 
 // envMu serializes all tests that touch environment variables or the
-// shared ENVREPLACE_* configuration.
+// shared DOCKER_ENV_REPLACE_* configuration.
 var envMu sync.Mutex
 
 // testName is a unique prefix for variables used by a single test.
@@ -29,11 +29,11 @@ var testName int
 // freshVar returns a unique environment variable name.
 func freshVar(name string) string {
 	testName++
-	return fmt.Sprintf("ENVREPLACE_TEST_%d_%s", testName, name)
+	return fmt.Sprintf("DOCKER_ENV_REPLACE_TEST_%d_%s", testName, name)
 }
 
 // freshInputDir prepares a new input directory and points the
-// ENVREPLACE_* configuration at it plus a fresh output directory.
+// DOCKER_ENV_REPLACE_* configuration at it plus a fresh output directory.
 // It returns the input and output paths.
 func freshInputDir(t *testing.T) (string, string) {
 	root := t.TempDir()
@@ -537,7 +537,7 @@ func TestFailedRunLeavesOutputIntact(t *testing.T) {
 
 	// No temporary directory may linger next to the output.
 	for _, name := range listFiles(t, filepath.Dir(outDir)) {
-		if strings.HasPrefix(name, ".envreplace-tmp-") {
+		if strings.HasPrefix(name, ".docker-env-replace-tmp-") {
 			t.Errorf("temporary directory left behind: %s", name)
 		}
 	}
@@ -697,22 +697,22 @@ func TestPermissionsPreserved(t *testing.T) {
 	}
 }
 
-func TestTokenMayReferenceEnvReplaceVar(t *testing.T) {
+func TestTokenMayReferenceConfigPrefixedVar(t *testing.T) {
 	envMu.Lock()
 	defer envMu.Unlock()
 	inDir, outDir := freshInputDir(t)
 
-	// A variable whose name starts with ENVREPLACE_ is an ordinary
+	// A variable whose name starts with DOCKER_ENV_REPLACE_ is an ordinary
 	// variable: tokens referring to it are resolved normally.
-	t.Setenv("ENVREPLACE_CUSTOM_FLAVOR", "vanilla")
-	writeFile(t, filepath.Join(inDir, "flavor.txt"), "flavor=<ENVREPLACE_CUSTOM_FLAVOR>")
+	t.Setenv("DOCKER_ENV_REPLACE_CUSTOM_FLAVOR", "vanilla")
+	writeFile(t, filepath.Join(inDir, "flavor.txt"), "flavor=<DOCKER_ENV_REPLACE_CUSTOM_FLAVOR>")
 
 	if err := runHelper(t); err != nil {
 		t.Fatal(err)
 	}
 
 	if got := readText(t, filepath.Join(outDir, "flavor.txt")); got != "flavor=vanilla" {
-		t.Errorf("ENVREPLACE_ variable replacement = %q", got)
+		t.Errorf("DOCKER_ENV_REPLACE_ variable replacement = %q", got)
 	}
 }
 
@@ -851,7 +851,7 @@ func TestOutputParentNotWritable(t *testing.T) {
 		t.Errorf("stale output file was not removed")
 	}
 	for _, name := range listFiles(t, outDir) {
-		if strings.HasPrefix(name, ".envreplace-tmp-") {
+		if strings.HasPrefix(name, ".docker-env-replace-tmp-") {
 			t.Errorf("temporary directory left behind: %s", name)
 		}
 	}

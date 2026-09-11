@@ -1,12 +1,11 @@
 # Go build output
-envreplace
 docker-env-replace
 *.exe
 *.o
 
 # Environment used by the Docker Compose example / tests
 .env
-.envreplace-tmp-*
+.docker-env-replace-tmp-*
 
 # OS/editor cruft
 .DS_Store

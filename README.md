@@ -13,8 +13,8 @@ No external dependencies.
 
 ## How it works
 
-- Every file and directory under `ENVREPLACE_INPUT_DIR` (default
-  `/input`) is mirrored to `ENVREPLACE_OUTPUT_DIR` (default `/output`)
+- Every file and directory under `DOCKER_ENV_REPLACE_INPUT_DIR` (default
+  `/input`) is mirrored to `DOCKER_ENV_REPLACE_OUTPUT_DIR` (default `/output`)
   with an identical structure.
 - Inside text files, each token
 
@@ -28,23 +28,23 @@ No external dependencies.
 
 ### Configuration
 
-All utility configuration uses the `ENVREPLACE_` prefix. A config
+All utility configuration uses the `DOCKER_ENV_REPLACE_` prefix. A config
 variable that is unset *or* set to the empty string falls back to its
-default — except `ENVREPLACE_TOKEN_PREFIX` and
-`ENVREPLACE_TOKEN_SUFFIX`, which must always be non-empty: setting
+default — except `DOCKER_ENV_REPLACE_TOKEN_PREFIX` and
+`DOCKER_ENV_REPLACE_TOKEN_SUFFIX`, which must always be non-empty: setting
 either to the empty string is a configuration error. Any *other*
 environment variable is a candidate replacement variable — including
-variables whose names start with `ENVREPLACE_`: a token such as
-`<ENVREPLACE_CUSTOM_FLAVOR>` simply resolves the environment variable
+variables whose names start with `DOCKER_ENV_REPLACE_`: a token such as
+`<DOCKER_ENV_REPLACE_CUSTOM_FLAVOR>` simply resolves the environment variable
 of that name, exactly like any other token.
 
 | Variable                    | Default  | Description                                             |
 |-----------------------------|----------|---------------------------------------------------------|
-| `ENVREPLACE_INPUT_DIR`      | `/input` | Directory tree to process (must exist and be a directory) |
-| `ENVREPLACE_OUTPUT_DIR`     | `/output`| Directory to write the substituted tree to               |
-| `ENVREPLACE_TOKEN_PREFIX`   | `<`      | Token start delimiter                                   |
-| `ENVREPLACE_TOKEN_SUFFIX`   | `>`      | Token end delimiter                                     |
-| `ENVREPLACE_EMPTY_VALUE`    | `(empty)`| Sentinel value that expands to the empty string         |
+| `DOCKER_ENV_REPLACE_INPUT_DIR`      | `/input` | Directory tree to process (must exist and be a directory) |
+| `DOCKER_ENV_REPLACE_OUTPUT_DIR`     | `/output`| Directory to write the substituted tree to               |
+| `DOCKER_ENV_REPLACE_TOKEN_PREFIX`   | `<`      | Token start delimiter                                   |
+| `DOCKER_ENV_REPLACE_TOKEN_SUFFIX`   | `>`      | Token end delimiter                                     |
+| `DOCKER_ENV_REPLACE_EMPTY_VALUE`    | `(empty)`| Sentinel value that expands to the empty string         |
 
 ### Behavior rules
 
@@ -61,13 +61,13 @@ of that name, exactly like any other token.
    way. To write an intentionally empty value, set the variable to the
    empty sentinel instead (default `(empty)`).
 4. **Empty sentinel.** If the referenced value is exactly
-   `ENVREPLACE_EMPTY_VALUE`, it expands to the empty string.
+   `DOCKER_ENV_REPLACE_EMPTY_VALUE`, it expands to the empty string.
 5. **Binary detection.** Any file containing a NUL byte, or that is not
    valid UTF-8, is copied byte-for-byte with no substitution. The whole
    file is scanned (not just a leading chunk), so a NUL past the first
    8192 bytes still marks the file as binary.
 6. **Atomic replacement.** The whole result is built in a temporary
-   directory (`.envreplace-tmp-*`) before anything in the output
+   directory (`.docker-env-replace-tmp-*`) before anything in the output
    directory is touched. On any failure the temporary directory is
    removed, the existing output is left untouched, an error is printed
    to stderr, and the exit code is 1. An empty input tree mirrors to an
@@ -121,8 +121,8 @@ services:
     image: ghcr.io/martinca/docker-env-replace:latest
     env_file: .env
     environment:
-      ENVREPLACE_INPUT_DIR: /input
-      ENVREPLACE_OUTPUT_DIR: /output
+      DOCKER_ENV_REPLACE_INPUT_DIR: /input
+      DOCKER_ENV_REPLACE_OUTPUT_DIR: /output
     volumes:
       - ./templates:/input:ro
       - ./config:/output
