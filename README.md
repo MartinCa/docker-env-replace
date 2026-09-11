@@ -67,27 +67,28 @@ of that name, exactly like any other token.
    file is scanned (not just a leading chunk), so a NUL past the first
    8192 bytes still marks the file as binary.
 6. **Atomic replacement.** The whole result is built in a temporary
-   directory created next to the output directory
-   (`.envreplace-tmp-*`). Only after every file has been processed
-   successfully is the old output removed and the temporary directory
-   renamed into place. On any failure the temporary directory is removed,
-   the existing output is left untouched, an error is printed to stderr,
-   and the exit code is 1. An empty input tree mirrors to an empty output
-   tree (stale files are removed). The output directory must not be the
-   input directory, nor contain it, nor be contained in it. Because the
-   old output is removed *before* the rename, a rename failure (for
-   example, a vanished parent directory) can leave no output at all;
-   there is no way to rename over a non-empty directory.
-   If the output directory's parent is not writable — for example, a
-   container where the output directory is a writable mounted volume but
-   its parent (such as `/`) is a read-only root filesystem — but the
-   output directory itself already exists, the temporary directory is
-   built inside it instead and its entries are swapped in individually
-   rather than by a single rename. This is not fully atomic: a failure
-   partway through the swap can leave the output directory with a mix of
-   old and new entries. If the output directory does not exist yet in
-   this situation, the run still fails, since there is nowhere writable
-   to build it.
+   directory (`.envreplace-tmp-*`) before anything in the output
+   directory is touched. On any failure the temporary directory is
+   removed, the existing output is left untouched, an error is printed
+   to stderr, and the exit code is 1. An empty input tree mirrors to an
+   empty output tree (stale files are removed). The output directory
+   must not be the input directory, nor contain it, nor be contained in
+   it.
+
+   If the output directory does not exist yet, the temporary directory
+   is created as its sibling and a single rename creates the output
+   directory — this is fully atomic. If the output directory already
+   exists, the temporary directory is instead built *inside* it, and its
+   entries are swapped in individually (existing entries removed, then
+   the new entries moved in): an existing output directory is very often
+   a mount point (a Docker volume mounted directly at the output path),
+   which the OS will not let a process remove or rename over — only its
+   contents can be changed, and doing so also sidesteps needing write
+   access to the output directory's parent (for example, a container
+   where the output directory is a writable mounted volume but its
+   parent, such as `/`, is a read-only root filesystem). This in-place
+   swap is not fully atomic: a failure partway through can leave the
+   output directory with a mix of old and new entries.
 7. **Permissions.** File and directory permission bits are preserved
    from the input where practical.
 8. **Symlinks.** A symbolic link to a file is followed and its target's
