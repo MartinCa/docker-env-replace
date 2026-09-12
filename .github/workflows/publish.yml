@@ -6,8 +6,15 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: publish-${{ github.ref }}
+  # Never cancel a publish midway: a half-pushed image is worse
+  # than waiting for the previous run to finish.
+  cancel-in-progress: false
+
 jobs:
-  publish:
+  push_to_registry:
+    name: Push Docker image to GHCR
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -43,3 +50,4 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
