@@ -59,12 +59,13 @@ PATH="$HOME/.local/bin:$PATH" lefthook install   # idempotent; re-run after a fr
 - **commit-msg** — `commit-msg.yml` enforces Conventional Commits, e.g.
   `feat: ...`, `fix(api): ...`.
 
-`gofmt` and `go build`/`go test` are enforced in both the hooks and `ci.yml` (the
-`lint` job also runs `test -z "$(gofmt -l .)"`). `goimports` (import grouping and
-ordering), `betterleaks`, and the commit-msg check are **hook-only** — CI does
-not run them, so the pre-commit hook is the only guard. `zizmor` runs in both
-places but in CI it only uploads a SARIF report to code scanning (non-blocking,
-not a merge gate); the pre-commit hook is the blocking check.
+`go build` and `go test` are enforced in `ci.yml` only (the `lint` job runs `go
+build ./...` and `test -z "$(gofmt -l .)"`; the `test` job runs `go test ./...`).
+The hooks run formatting only: `gofmt -w` and `goimports -w`. `goimports` (import
+grouping and ordering), `betterleaks`, and the commit-msg check are **hook-only** —
+CI does not run them, so the pre-commit hook is the only guard. `zizmor` runs in
+both places but in CI it only uploads a SARIF report to code scanning
+(non-blocking, not a merge gate); the pre-commit hook is the blocking check.
 
 Two hook tools must be on `PATH`: `betterleaks` (secret scan, install per its
 project README) and `zizmor` (workflow audit, install from zizmor.sh). If a tool
