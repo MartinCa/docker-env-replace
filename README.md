@@ -167,8 +167,9 @@ gofmt -l .         # check formatting (run `go fmt ./...` to fix)
 
 Git hooks (see `AGENTS.md`) are installed with the standalone lefthook binary,
 pinned to `v2.1.12` in the install instructions there — `lefthook.yml` itself
-only pins the shared `MartinCa/lefthook-configs` fragments at `v2.0.0`;
-`lefthook install` registers them.
+only pins the shared `MartinCa/lefthook-configs` fragments at `v2.0.1`;
+`lefthook install` registers them. AI agents must not install the lefthook
+binary themselves — it is included in the OpenCode image (see `AGENTS.md`).
 
 The Docker image is built multi-stage:
 
