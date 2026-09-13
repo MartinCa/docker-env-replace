@@ -54,11 +54,16 @@ gunzip /tmp/lefthook.gz && chmod +x /tmp/lefthook && mv /tmp/lefthook ~/.local/b
 PATH="$HOME/.local/bin:$PATH" lefthook install   # idempotent; re-run after a fresh clone
 ```
 
-`lefthook.yml` pins the shared `MartinCa/lefthook-configs` fragments at `v2.0.1`:
+`lefthook.yml` pins the shared `MartinCa/lefthook-configs` fragments at `v2.1.0`:
 - **pre-commit** — `langs/go.yml` runs `gofmt -w` and `goimports -w` on staged
   `*.go` (re-staging fixed files); `lefthook-shared.yml` secret-scans the staged
   diff with `betterleaks` (blocks the commit on a leak) and audits staged
   `.github/workflows/*` files with `zizmor` (blocks on a finding).
+- **pre-push** — `pre-push-go.yml` runs the full test suite (`go test ./...`) on
+  every push, blocking pushes on a red suite. It needs the `go` toolchain on
+  `PATH` (always true in this repo). Escape hatches: `git push --no-verify`
+  (bypasses all hooks for that push) or `LEFTHOOK=0 git push` (bypasses lefthook
+  only).
 - **commit-msg** — `commit-msg.yml` enforces Conventional Commits, e.g.
   `feat: ...`, `fix(api): ...`.
 
