@@ -36,3 +36,42 @@ up automatically) instead of hand-rolling shell smoke tests.
   `go test ./...` must all pass before committing.
 - CI workflows use SHA-pinned actions with version comments and minimal
   permissions — keep it that way for any new workflow.
+
+## Git hooks
+
+Local hooks run through [lefthook](https://github.com/evilmartians/lefthook), a
+single static binary (this repo has no package-manager hook install).
+
+**AI agents**: do not install the lefthook binary yourself — it is included in the OpenCode image. If `lefthook` is not on `PATH`, report this to the user and ask whether to install it.
+
+Human contributors install it once per clone, then register the hooks:
+
+```sh
+curl -fsSL -o /tmp/lefthook.gz \
+  https://github.com/evilmartians/lefthook/releases/download/v2.1.12/lefthook_2.1.12_Linux_x86_64.gz
+gunzip /tmp/lefthook.gz && chmod +x /tmp/lefthook && mv /tmp/lefthook ~/.local/bin/
+# (arm64/macOS: pick the matching `lefthook_2.1.12_<OS>_<ARCH>` release asset)
+PATH="$HOME/.local/bin:$PATH" lefthook install   # idempotent; re-run after a fresh clone
+```
+
+`lefthook.yml` pins the shared `MartinCa/lefthook-configs` fragments at `v2.0.1`:
+- **pre-commit** — `langs/go.yml` runs `gofmt -w` and `goimports -w` on staged
+  `*.go` (re-staging fixed files); `lefthook-shared.yml` secret-scans the staged
+  diff with `betterleaks` (blocks the commit on a leak) and audits staged
+  `.github/workflows/*` files with `zizmor` (blocks on a finding).
+- **commit-msg** — `commit-msg.yml` enforces Conventional Commits, e.g.
+  `feat: ...`, `fix(api): ...`.
+
+`go build` and `go test` are enforced in `ci.yml` only (the `lint` job runs `go
+build ./...` and `test -z "$(gofmt -l .)"`; the `test` job runs `go test ./...`).
+The hooks run formatting only: `gofmt -w` and `goimports -w`. `goimports` (import
+grouping and ordering), `betterleaks`, and the commit-msg check are **hook-only** —
+CI does not run them, so the pre-commit hook is the only guard. `zizmor` runs in
+both places but in CI it only uploads a SARIF report to code scanning
+(non-blocking, not a merge gate); the pre-commit hook is the blocking check.
+
+Two hook tools must be on `PATH`: `betterleaks` (secret scan, install per its
+project README) and `zizmor` (workflow audit, install from zizmor.sh). If a tool
+is missing, `LEFTHOOK=0 git commit` skips the hooks entirely — a pragmatic escape
+hatch for restricted setups, not a way to dodge the gates. `lefthook dump` shows
+the merged hook config; `lefthook run pre-commit --all-files` verifies it.
