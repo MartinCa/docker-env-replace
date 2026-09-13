@@ -155,13 +155,18 @@ See [`examples/README.md`](examples/README.md):
 
 ## Development
 
-Prerequisites: the [Go](https://go.dev) toolchain (1.23 or newer).
+Prerequisites: the [Go](https://go.dev) toolchain (1.23 or newer) and
+`goimports` (`go install golang.org/x/tools/cmd/goimports@latest`) for the
+pre-commit hooks.
 
 ```sh
 go build ./...     # build the docker-env-replace binary
 go test ./...      # run the test suite
 gofmt -l .         # check formatting (run `go fmt ./...` to fix)
 ```
+
+Git hooks (see `AGENTS.md`) are installed with the standalone lefthook binary,
+pinned to `v2.1.12` in `lefthook.yml`; `lefthook install` registers them.
 
 The Docker image is built multi-stage:
 
